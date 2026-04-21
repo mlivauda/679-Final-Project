@@ -1,0 +1,138 @@
+---
+title: "EDA and Preliminary Steps"
+author: "Madeleine Livaudais"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load libraries
+library(ISLR2)
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(factoextra)    # PCA visualization - scree plots, biplots
+library(cluster)       # clustering algorithms
+library(tree)          # basic classification trees
+library(randomForest)  # if you end up using RF
+library(glmnet)        # Lasso (Ch. 6)
+library(MASS)          # LDA if needed (Ch. 4)
+library(boot)          # bootstrap and CV (Ch. 5)
+```
+
+## EDA 
+
+```{r}
+#| label: Read in the data and see basic structure
+
+# Set seed for reproducability
+set.seed(42)
+
+# Inspect the data
+data(Caravan)
+dim(Caravan)
+str(Caravan)
+```
+
+```{r}
+#| label: Visualize the purchase distribution (outcome variable)
+
+summary(Caravan$Purchase)
+
+# Purchase distribution
+ggplot(Caravan, aes(x = Purchase, fill = Purchase)) +
+  geom_bar() +
+  geom_text(stat = "count", aes(label = after_stat(count), vjust = -0.5)) +
+  labs(title = "Distribution of Caravan Insurance Purchase",
+       x = "Purchase", y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Think about it from the insurance company's perspective. They're using this model to decide which customers to target with a marketing campaign. They have two ways they can make a mistake:
+
+- Mistake 1: They predict someone will buy insurance but that person actually won't. They wasted a marketing call. Annoying but not catastrophic.
+
+- Mistake 2: They predict someone won't buy insurance but that person actually would have. They missed a real customer. This is the costly mistake.
+
+So what the insurance company really cares about is: of all the people who actually buy insurance, how many did our model correctly identify? That metric is called sensitivity or recall — and it's much more informative than accuracy when classes are imbalanced. In fact, accuracy can be misleading in this situation. Both of these can be calculated from a confusion matrix though.
+
+
+```{r}
+#| label: Predictor distributions
+
+# Check predictor distributions
+caravan_predictors <- Caravan %>% dplyr::select(-Purchase)
+
+# Look at the spread of means and variances across variables
+data.frame(
+  mean = colMeans(caravan_predictors),
+  variance = apply(caravan_predictors, 2, var)
+) %>% summary()
+```
+
+Here we see the variance ranges from 0.0005 to 165 across predictors, making scaling essential before PCA.
+
+```{r}
+# Check sparsity - how many variables are mostly zeros?
+zero_pct <- colMeans(caravan_predictors == 0) * 100
+
+data.frame(
+  variable = names(zero_pct),
+  pct_zero = round(zero_pct, 1)
+) %>%
+  arrange(desc(pct_zero))
+```
+
+Here we show that a lot of variables are almost 99.9% zeros, meaning we get no information and they likely have 0 variance. This means that dimension reduction is very important here. 
+
+```{r}
+# Purchase rate by income level
+Caravan %>%
+  group_by(MINKGEM) %>%
+  summarise(
+    n = n(),
+    purchase_rate = mean(Purchase == "Yes") * 100
+  ) %>%
+  ggplot(aes(x = factor(MINKGEM), y = purchase_rate)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Purchase Rate by Average Income Level",
+       x = "Income Level (1=low, 6=high)",
+       y = "Purchase Rate (%)") +
+  theme_minimal()
+```
+
+This shows the as income increases, the purchase rate generally increases. There is a positive association between income and purchase. 
+
+## PCA
+
+```{r, warning=FALSE}
+# Scale the predictors and run PCA
+caravan_scaled <- scale(caravan_predictors)
+
+pca_result <- prcomp(caravan_scaled, center = FALSE, scale. = FALSE)
+# note: we already scaled manually, so center and scale are FALSE here
+
+# Scree plot - how much variance does each component explain?
+fviz_eig(pca_result, 
+         ncp = 20,  # show first 20 components
+         addlabels = TRUE,
+         barfill = "steelblue",
+         barcolor = "steelblue") +
+  labs(title = "Scree Plot: Variance Explained by Principal Components",
+       x = "Principal Component",
+       y = "Percentage of Variance Explained") +
+  theme_minimal()
+
+# Cumulative variance explained
+var_explained <- summary(pca_result)$importance[3,]
+data.frame(
+  PC = 1:40,
+  cumulative_var = var_explained[1:40] * 100
+) %>%
+  head(40)
+```
+
